@@ -1,10 +1,13 @@
 package com.praya.dbds;
 
+import android.content.Context;
 import android.graphics.Color;
-import android.os.AsyncTask;
+import android.location.Location;
+import android.location.LocationListener;
+import android.location.LocationManager;
 import android.support.v4.app.FragmentActivity;
 import android.os.Bundle;
-import android.util.Log;
+import android.widget.Toast;
 
 import com.google.android.gms.maps.CameraUpdateFactory;
 import com.google.android.gms.maps.GoogleMap;
@@ -14,26 +17,24 @@ import com.google.android.gms.maps.model.LatLngBounds;
 import com.google.android.gms.maps.model.MarkerOptions;
 import com.google.android.gms.maps.model.PolylineOptions;
 
-import org.json.JSONObject;
-
-import java.io.BufferedReader;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.InputStreamReader;
-import java.net.HttpURLConnection;
-import java.net.URL;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-
-public class MapsActivity extends FragmentActivity {
-
+public class MapsActivity extends FragmentActivity implements LocationListener {
     private GoogleMap mMap; // Might be null if Google Play services APK is not available.
+    private LocationManager locationManager;
+    float minZoom = 9.0f;
+    LatLng startPosition, curPosition;
+    PolylineOptions lineOptions;
+    LatLngBounds screenMapBounds;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_maps);
+
+        lineOptions = new PolylineOptions();
+        lineOptions.width(10);
+        lineOptions.color(Color.RED);
+
+        setUpGPS();
         setUpMapIfNeeded();
     }
 
@@ -41,6 +42,104 @@ public class MapsActivity extends FragmentActivity {
     protected void onResume() {
         super.onResume();
         setUpMapIfNeeded();
+    }
+
+    /************* Called after each 3 sec **********/
+    @Override
+    public void onLocationChanged(Location location)
+    {
+        if (startPosition == null)
+        {
+            startPosition = new LatLng(location.getLatitude(), location.getLongitude());
+            mMap.moveCamera(CameraUpdateFactory.newLatLng(startPosition));
+            mMap.animateCamera(CameraUpdateFactory.zoomTo(9));
+            screenMapBounds = mMap.getProjection().getVisibleRegion().latLngBounds;
+            System.out.println("1Jaga " + startPosition);
+        }
+
+        curPosition = new LatLng(location.getLatitude(), location.getLongitude());
+        lineOptions.add(curPosition);
+        mMap.addPolyline(lineOptions);
+        if (!(screenMapBounds.contains(curPosition)))
+        {
+            float posDist = findDistance(startPosition, curPosition);
+            float mapDist = findDistance(screenMapBounds.northeast, screenMapBounds.southwest);
+            System.out.println("2Jaga posDist = " + posDist + " mapDist = " + mapDist);
+
+            if(posDist > mapDist)
+            {
+                mMap.setOnMapLoadedCallback(new GoogleMap.OnMapLoadedCallback() {
+                    @Override
+                    public void onMapLoaded() {
+
+                        LatLngBounds.Builder bld = new LatLngBounds.Builder();
+                        bld.include(startPosition);
+                        bld.include(curPosition);
+                        LatLngBounds bounds = bld.build();
+
+                        mMap.moveCamera(CameraUpdateFactory.newLatLngBounds(bounds, 30));
+                        System.out.println("3Jaga " + mMap.getCameraPosition().zoom + " " + minZoom);
+                        /*if (mMap.getCameraPosition().zoom > minZoom) {
+                            mMap.animateCamera(CameraUpdateFactory.zoomTo(9));
+                            System.out.println("4Jaga " + mMap.getCameraPosition().zoom);
+                        }*/
+                        screenMapBounds = mMap.getProjection().getVisibleRegion().latLngBounds;
+                    }
+                });
+            }
+        }
+    }
+
+    public float findDistance(LatLng start, LatLng end)
+    {
+        Location startLoc = new Location("");
+        startLoc.setLatitude(start.latitude);
+        startLoc.setLongitude(start.longitude);
+        Location endLoc = new Location("");
+        endLoc.setLatitude(end.latitude);
+        endLoc.setLongitude(end.longitude);
+
+        return(startLoc.distanceTo(endLoc));
+    }
+
+    @Override
+    public void onProviderDisabled(String provider) {
+        /******** Called when User off Gps *********/
+        Toast.makeText(getBaseContext(), "Gps turned off ", Toast.LENGTH_LONG).show();
+    }
+
+    @Override
+    public void onProviderEnabled(String provider) {
+        /******** Called when User on Gps  *********/
+        Toast.makeText(getBaseContext(), "Gps turned on ", Toast.LENGTH_LONG).show();
+        setUpGPS();
+    }
+
+    @Override
+    public void onStatusChanged(String provider, int status, Bundle extras) {
+        //
+    }
+
+    public void setUpGPS()
+    {
+        /********** get Gps location service LocationManager object ***********/
+        locationManager = (LocationManager) getSystemService(Context.LOCATION_SERVICE);
+
+        /*************** CAL METHOD requestLocationUpdates ***************/
+        // Parameters :
+        //   First(provider)    :  the name of the provider with which to register
+        //   Second(minTime)    :  the minimum time interval for notifications,
+        //                         in milliseconds. This field is only used as a hint
+        //                         to conserve power, and actual time between location
+        //                         updates may be greater or lesser than this value.
+        //   Third(minDistance) :  the minimum distance interval for notifications, in meters
+        //   Fourth(listener)   :  a {#link LocationListener} whose onLocationChanged(Location)
+        //                         method will be called for each location update
+        locationManager.requestLocationUpdates( LocationManager.GPS_PROVIDER,
+                3000,   // 3 sec
+                0, this);
+        /********* After registration onLocationChanged method  ********/
+        /********* called periodically after each 3 sec ***********/
     }
 
     /**
@@ -77,193 +176,35 @@ public class MapsActivity extends FragmentActivity {
      * <p/>
      * This should only be called once and when we are sure that {@link #mMap} is not null.
      */
-    private void setUpMap() {
-        final LatLng posCoimbatore = new LatLng(11.01684, 76.95583);
-        final LatLng posTirupur = new LatLng(11.10852, 77.34107);
-
-        String url = getUrl(posCoimbatore, posTirupur);
-        FetchUrl FetchUrl = new FetchUrl();
-        // Start downloading json data from Google Directions API
-        FetchUrl.execute(url);
-
-        mMap.addMarker(new MarkerOptions().position(posCoimbatore).title("Marker"));
-        mMap.addMarker(new MarkerOptions().position(posTirupur).title("Marker"));
-        //mMap.moveCamera(CameraUpdateFactory.newLatLng(posCoimbatore));
-        //mMap.animateCamera(CameraUpdateFactory.zoomTo(9));
+    private void setUpMap()
+    {
+/*        final LatLng posStart = new LatLng(11.01684, 76.95583);
+        LatLng posTemp = new LatLng(11.01684, 76.95583);
+        PolylineOptions lineOptions = new PolylineOptions();
+        for (int i=0; i<=10; i++)
+        {
+            posTemp = new LatLng((11.01684 + i*0.1), (76.95583 + i*0.1));
+            lineOptions.add(posTemp);
+            lineOptions.width(10);
+            lineOptions.color(Color.RED);
+            mMap.addPolyline(lineOptions);
+        }
+        final LatLng posFinal = posTemp;
 
         mMap.setOnMapLoadedCallback(new GoogleMap.OnMapLoadedCallback() {
             @Override
             public void onMapLoaded() {
                 LatLngBounds.Builder bld = new LatLngBounds.Builder();
-                bld.include(posCoimbatore);
-                bld.include(posTirupur);
+                bld.include(posStart);
+                bld.include(posFinal);
                 LatLngBounds bounds = bld.build();
                 mMap.moveCamera(CameraUpdateFactory.newLatLngBounds(bounds, 30));
                 System.out.println("Jaga " + mMap.getCameraPosition().zoom);
             }
-        });
-    }
-
-    // Fetches data from url passed
-    private class FetchUrl extends AsyncTask<String, Void, String> {
-
-        @Override
-        protected String doInBackground(String... url) {
-
-            // For storing data from web service
-            String data = "";
-
-            try {
-                // Fetching the data from web service
-                data = downloadUrl(url[0]);
-                Log.d("Background Task data", data.toString());
-            } catch (Exception e) {
-                Log.d("Background Task", e.toString());
-            }
-            return data;
-        }
-
-        @Override
-        protected void onPostExecute(String result) {
-            super.onPostExecute(result);
-
-            ParserTask parserTask = new ParserTask();
-
-            // Invokes the thread for parsing the JSON data
-            parserTask.execute(result);
-
-        }
-    }
-
-    /**
-     * A class to parse the Google Places in JSON format
-     */
-    private class ParserTask extends AsyncTask<String, Integer, List<List<HashMap<String, String>>>> {
-
-        // Parsing the data in non-ui thread
-        @Override
-        protected List<List<HashMap<String, String>>> doInBackground(String... jsonData) {
-
-            JSONObject jObject;
-            List<List<HashMap<String, String>>> routes = null;
-
-            try {
-                jObject = new JSONObject(jsonData[0]);
-                Log.d("ParserTask",jsonData[0].toString());
-                DataParser parser = new DataParser();
-                Log.d("ParserTask", parser.toString());
-
-                // Starts parsing data
-                routes = parser.parse(jObject);
-                Log.d("ParserTask","Executing routes");
-                Log.d("ParserTask",routes.toString());
-
-            } catch (Exception e) {
-                Log.d("ParserTask",e.toString());
-                e.printStackTrace();
-            }
-            return routes;
-        }
-
-        // Executes in UI thread, after the parsing process
-        @Override
-        protected void onPostExecute(List<List<HashMap<String, String>>> result) {
-            ArrayList<LatLng> points;
-            PolylineOptions lineOptions = null;
-
-            // Traversing through all the routes
-            for (int i = 0; i < result.size(); i++) {
-                points = new ArrayList<>();
-                lineOptions = new PolylineOptions();
-
-                // Fetching i-th route
-                List<HashMap<String, String>> path = result.get(i);
-
-                // Fetching all the points in i-th route
-                for (int j = 0; j < path.size(); j++) {
-                    HashMap<String, String> point = path.get(j);
-
-                    double lat = Double.parseDouble(point.get("lat"));
-                    double lng = Double.parseDouble(point.get("lng"));
-                    LatLng position = new LatLng(lat, lng);
-
-                    points.add(position);
-                }
-
-                // Adding all the points in the route to LineOptions
-                lineOptions.addAll(points);
-                lineOptions.width(10);
-                lineOptions.color(Color.RED);
-
-                Log.d("onPostExecute","onPostExecute lineoptions decoded");
-
-            }
-
-            // Drawing polyline in the Google Map for the i-th route
-            if(lineOptions != null) {
-                mMap.addPolyline(lineOptions);
-            }
-            else {
-                Log.d("onPostExecute","without Polylines drawn");
-            }
-        }
-    }
-
-    /**
-     * A method to download json data from url
-     */
-    private String downloadUrl(String strUrl) throws IOException {
-        String data = "";
-        InputStream iStream = null;
-        HttpURLConnection urlConnection = null;
-        try {
-            URL url = new URL(strUrl);
-
-            // Creating an http connection to communicate with url
-            urlConnection = (HttpURLConnection) url.openConnection();
-
-            // Connecting to url
-            urlConnection.connect();
-
-            // Reading data from url
-            iStream = urlConnection.getInputStream();
-
-            BufferedReader br = new BufferedReader(new InputStreamReader(iStream));
-
-            StringBuffer sb = new StringBuffer();
-
-            String line = "";
-            while ((line = br.readLine()) != null) {
-                sb.append(line);
-            }
-
-            data = sb.toString();
-            Log.d("downloadUrl", data.toString());
-            br.close();
-
-        } catch (Exception e) {
-            Log.d("Exception", e.toString());
-        } finally {
-            iStream.close();
-            urlConnection.disconnect();
-        }
-        return data;
-    }
-
-    private String getUrl(LatLng origin, LatLng dest) {
-        // Origin of route
-        String str_origin = "origin=" + origin.latitude + "," + origin.longitude;
-        // Destination of route
-        String str_dest = "destination=" + dest.latitude + "," + dest.longitude;
-        // Sensor enabled
-        String sensor = "sensor=false";
-        // Building the parameters to the web service
-        String parameters = str_origin + "&" + str_dest + "&" + sensor;
-        // Output format
-        String output = "json";
-        // Building the url to the web service
-        String url = "https://maps.googleapis.com/maps/api/directions/" + output + "?" + parameters;
-
-        return url;
+        });*/
+        final LatLng posCoimbatore = new LatLng(11.01684, 76.95583);
+        mMap.moveCamera(CameraUpdateFactory.newLatLng(posCoimbatore));
+        mMap.animateCamera(CameraUpdateFactory.zoomTo(9));
+        screenMapBounds = mMap.getProjection().getVisibleRegion().latLngBounds;
     }
 }
